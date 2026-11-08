@@ -22,6 +22,12 @@
  *   已完成：task_status === 30
  *   is_received 恒为 true，不可用于判断
  *
+ * ⏱ 登录态（token）机制（实测 2026-11-08）：
+ *   - Authorization 是服务端签发的 ES256 JWT，exp 显示寿命约 2 小时（非 cookie、非一天）
+ *   - 客户端无法续期，只有小程序运行时会重新登录换新 token
+ *   - 所以：只要打开朴朴小程序（任意页面即可，不必进签到页），脚本抓到新 token 立刻打卡
+ *   - cron 兜底仅在 token 仍有效时起作用，过期时只发一条提示
+ *
  * 配置：
  *   [Script]
  *   pupu_signin = type=http-request, pattern=^https://j1\.pupuapi\.com/, requires-body=0, script-path=pupu_signin.js
@@ -80,18 +86,22 @@ function b64decode(s) {
 }
 
 // 本地解析 JWT exp，比服务端错误码更可靠（400000 既可能是过期也可能是缺头）
-function tokenExpired(token) {
-  if (!token) return true;
+// 返回 { valid, left }，left = 剩余分钟（-1 表示无法解析）
+function tokenInfo(token) {
+  if (!token) return { valid: false, left: 0 };
   try {
     var p = String(token).replace(/^Bearer\s+/i, "").split(".")[1];
-    if (!p) return false;
+    if (!p) return { valid: true, left: -1 };
     p = p.replace(/-/g, "+").replace(/_/g, "/");
     var pad = p.length % 4; if (pad) p += new Array(5 - pad).join("=");
     var obj = JSON.parse(b64decode(p));
-    if (!obj.exp) return false;
-    return obj.exp * 1000 < Date.now();
-  } catch (e) { log("jwt decode fail: " + e); return false; }
+    if (!obj.exp) return { valid: true, left: -1 };
+    var left = Math.round((obj.exp * 1000 - Date.now()) / 60000);
+    return { valid: left > 0, left: left };
+  } catch (e) { log("jwt decode fail: " + e); return { valid: true, left: -1 }; }
 }
+
+function tokenExpired(token) { return !tokenInfo(token).valid; }
 
 function saveCtx() {
   var c = {
@@ -148,9 +158,15 @@ function signin(trigger, finish) {
     if (trigger === "cron") remind("缺少门店信息，打开一次朴朴小程序签到页即可");
     finish(); return;
   }
-  if (tokenExpired(token)) {
-    log("token expired locally");
-    remind("登录已过期，打开一次朴朴小程序即可恢复");
+
+  var ti = tokenInfo(token);
+  var label = ti.left === -1 ? "no-exp-claim" : (ti.valid ? ("ok, " + ti.left + " min left") : ("EXPIRED " + (-ti.left) + " min ago"));
+  log("token " + label);
+  if (!ti.valid) {
+    log("skip: token expired (lifetime ~2h, refreshed only when mini program runs)");
+    if (trigger === "cron") {
+      remind("登录态已过期（有效期约 2 小时）；打开朴朴小程序任意页面即自动刷新并打卡");
+    }
     finish(); return;
   }
 
