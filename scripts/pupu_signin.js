@@ -50,7 +50,7 @@
  *   打卡由 cron 每 10 分钟补上（0,10,20,30,40,50 分钟）（token 有效期内，最迟 10 分钟完成）。
  */
 
-var VER = "5.2";
+var VER = "5.3";
 var API = "https://j1.pupuapi.com";
 var TK = "pp_pupu_token";     // Authorization: Bearer ...
 var GK = "pp_pupu_gid";       // 活动 task_group_id
@@ -64,6 +64,7 @@ function wr(k, v) { try { $persistentStore.write(String(v), k); } catch (e) {} }
 function today() { var d = new Date(); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
 function doneKey() { return "pp_done_" + today(); }
 function warnKey() { return "pp_warn_" + today(); }
+function credKey() { return "pp_cred_" + today(); }
 function notify(t, b) { try { $notification.post(t, "朴朴签到", b); } catch (e) {} }
 function parse(s) { try { return JSON.parse(s); } catch (e) { return {}; } }
 function once(fn) { var c = false; return function () { if (c) return; c = true; fn(); }; }
@@ -269,14 +270,25 @@ function signin(trigger, finish) {
 
       var url = $request.url || "";
       log(method + " " + url.substring(0, 90));
+
       var auth = hdr("authorization");
-      if (auth) wr(TK, auth);
+      var tokChanged = false;
+      if (auth) {
+        var oldTok = rd(TK);
+        if (oldTok !== auth) { wr(TK, auth); tokChanged = true; }
+      }
       saveCtx();
 
       var m = url.match(/task_groups\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
       if (m && !/\/(preview|more_task)/.test(url)) { wr(GK, m[1]); log("gid=" + m[1]); }
 
       $done({});   // ← 立即放行，页面不受任何影响
+
+      // 首次抓到新凭据时通知一次（每天一条），让用户知道脚本在工作
+      if (tokChanged && !rd(credKey())) {
+        wr(credKey(), 1);
+        notify("凭据已获取", "已抓到登录态，" + (rd(doneKey()) ? "今日已完成打卡" : "将在 10 分钟内自动打卡"));
+      }
 
       // 可选：这里不再发任何请求。打卡由 cron 完成（见下方配置每 10 分钟）
       return;
