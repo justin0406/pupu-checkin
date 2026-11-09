@@ -41,7 +41,7 @@
  *   打卡由 cron 每 10 分钟补上（0,10,20,30,40,50 分钟）（token 有效期内，最迟 10 分钟完成）。
  */
 
-var VER = "5.1";
+var VER = "5.2";
 var API = "https://j1.pupuapi.com";
 var TK = "pp_pupu_token";     // Authorization: Bearer ...
 var GK = "pp_pupu_gid";       // 活动 task_group_id
@@ -252,11 +252,11 @@ function signin(trigger, finish) {
       // ============ 拦截模式：只抓凭据，立即放行，绝不阻塞页面 ============
       // 重要：早期版本在这里同步完成 GET+POST，会拖慢页面请求导致前端报
       //      "活动太火爆啦～请稍后再试"（前端 catch 分支的兜底文案）。
-      //      现在改为零阻塞：抓完凭据马上 $done()，打卡交给 cron。
+      //      现在改为零阻塞：抓完凭据马上 $done({})，打卡交给 cron。
       var method = String($request.method || "GET").toUpperCase();
-      if (method === "OPTIONS" || method === "HEAD") { $done(); return; }
+      if (method === "OPTIONS" || method === "HEAD") { $done({}); return; }
 
-      if (hdr("x-pupu-auto")) { $done(); return; }
+      if (hdr("x-pupu-auto")) { $done({}); return; }
 
       var url = $request.url || "";
       log(method + " " + url.substring(0, 90));
@@ -267,7 +267,7 @@ function signin(trigger, finish) {
       var m = url.match(/task_groups\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
       if (m && !/\/(preview|more_task)/.test(url)) { wr(GK, m[1]); log("gid=" + m[1]); }
 
-      $done();   // ← 立即放行，页面不受任何影响
+      $done({});   // ← 立即放行，页面不受任何影响
 
       // 可选：这里不再发任何请求。打卡由 cron 完成（见下方配置每 10 分钟）
       return;
@@ -275,11 +275,11 @@ function signin(trigger, finish) {
 
     // ============ cron 模式：完整打卡逻辑 ============
     log("cron fire");
-    if (rd(doneKey())) { log("done today"); $done(); return; }
-    signin("cron", once(function () { $done(); }));
+    if (rd(doneKey())) { log("done today"); $done({}); return; }
+    signin("cron", once(function () { $done({}); }));
 
   } catch (e) {
     log("FATAL: " + (e && e.stack ? e.stack : e));
-    try { $done(); } catch (e2) {}
+    try { $done({}); } catch (e2) {}
   }
 })();
