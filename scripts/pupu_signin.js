@@ -30,10 +30,15 @@
  *
  * 配置：
  *   [Script]
- *   pupu_signin = type=http-request, pattern=^https://j1\.pupuapi\.com/, requires-body=0, script-path=pupu_signin.js
- *   pupu_signin_cron = type=cron, cron="32 7,12,19 * * *", script-path=pupu_signin.js
+ *   pupu_signin = type=http-request, pattern=^https://j1\.pupuapi\.com/client/game/task_system/, requires-body=0, script-path=pupu_signin.js
+ *   pupu_signin_cron = type=cron, cron="0,10,20,30,40,50 * * * *", script-path=pupu_signin.js
  *   [MITM]
  *   hostname = %APPEND% j1.pupuapi.com
+ *
+ * ⚠ 为什么拦截时不再直接打卡：
+ *   拦截阶段同步做 GET+POST 会拖延页面请求，前端超时后走 catch 分支，
+ *   弹出「活动太火爆啦～请稍后再试」。改为拦截只抓凭据即刻放行，
+ *   打卡由 cron 每 10 分钟补上（0,10,20,30,40,50 分钟）（token 有效期内，最迟 10 分钟完成）。
  */
 
 var API = "https://j1.pupuapi.com";
@@ -243,9 +248,16 @@ function signin(trigger, finish) {
 (function main() {
   try {
     if (typeof $request !== "undefined") {
-      var url = $request.url || "";
-      if (hdr("x-pupu-auto")) { log("pass auto-request"); $done(); return; }
+      // ============ 拦截模式：只抓凭据，立即放行，绝不阻塞页面 ============
+      // 重要：早期版本在这里同步完成 GET+POST，会拖慢页面请求导致前端报
+      //      "活动太火爆啦～请稍后再试"（前端 catch 分支的兜底文案）。
+      //      现在改为零阻塞：抓完凭据马上 $done()，打卡交给 cron。
+      var method = String($request.method || "GET").toUpperCase();
+      if (method === "OPTIONS" || method === "HEAD") { $done(); return; }
 
+      if (hdr("x-pupu-auto")) { $done(); return; }
+
+      var url = $request.url || "";
       var auth = hdr("authorization");
       if (auth) wr(TK, auth);
       saveCtx();
@@ -253,20 +265,17 @@ function signin(trigger, finish) {
       var m = url.match(/task_groups\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
       if (m && !/\/(preview|more_task)/.test(url)) { wr(GK, m[1]); log("gid=" + m[1]); }
 
-      if (rd(doneKey())) { log("done today, pass"); $done(); return; }
+      $done();   // ← 立即放行，页面不受任何影响
 
-      var last = parseInt(rd(LK) || "0", 10);
-      if (Date.now() - last < 8000) { log("debounced"); $done(); return; }
-      wr(LK, Date.now());
-
-      if (rd(TK) && rd(GK)) signin("auto", once(function () { $done(); }));
-      else { log("wait token+gid"); $done(); }
-
-    } else {
-      log("cron fire");
-      if (rd(doneKey())) { log("done today"); $done(); return; }
-      signin("cron", once(function () { $done(); }));
+      // 可选：这里不再发任何请求。打卡由 cron 完成（见下方配置每 10 分钟）
+      return;
     }
+
+    // ============ cron 模式：完整打卡逻辑 ============
+    log("cron fire");
+    if (rd(doneKey())) { log("done today"); $done(); return; }
+    signin("cron", once(function () { $done(); }));
+
   } catch (e) {
     log("FATAL: " + (e && e.stack ? e.stack : e));
     try { $done(); } catch (e2) {}

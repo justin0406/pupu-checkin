@@ -3,11 +3,11 @@
 #!system=ios
 
 [Script]
-# 打开小程序/签到页时自动打卡（抓 token + 活动ID + 门店信息）
-http-request ^https?:\/\/j1\.pupuapi\.com\/ script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js, requires-body=false, max-size=-1, binary-body-mode=false, tag=朴朴签到
+# 打开小程序时只抓凭据（token + 活动ID + 门店信息），零阻塞放行
+http-request ^https?:\/\/j1\.pupuapi\.com\/client\/game\/task_system\/ script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js, requires-body=false, max-size=-1, binary-body-mode=false, tag=朴朴签到
 
-# 每日定时兜底（token 有效期内）
-cron "32 7,12,19 * * *" script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js, tag=朴朴签到定时
+# 每 10 分钟检查一次，token 有效时自动打卡
+cron "0,10,20,30,40,50 * * * *" script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js, tag=朴朴签到定时
 
 [MITM]
 hostname = %APPEND% j1.pupuapi.com

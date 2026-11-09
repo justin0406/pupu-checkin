@@ -18,8 +18,8 @@ https://raw.githubusercontent.com/justin0406/pupu-checkin/main/surge/pupu_signin
 
 ```ini
 [Script]
-pupu_signin = type=http-request, pattern=^https?://j1\.pupuapi\.com/, requires-body=0, script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js
-pupu_signin_cron = type=cron, cron="32 7,12,19 * * *", script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js
+pupu_signin = type=http-request, pattern=^https?://j1\.pupuapi\.com/client/game/task_system/, requires-body=0, script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js
+pupu_signin_cron = type=cron, cron="0,10,20,30,40,50 * * * *", script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js
 
 [MITM]
 hostname = %APPEND% j1.pupuapi.com
@@ -37,8 +37,8 @@ https://raw.githubusercontent.com/justin0406/pupu-checkin/main/loon/pupu_signin.
 
 ```ini
 [Script]
-http-request ^https?:\/\/j1\.pupuapi\.com\/ script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js, requires-body=false, max-size=-1, binary-body-mode=false, tag=朴朴签到
-cron "32 7,12,19 * * *" script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js, tag=朴朴签到定时
+http-request ^https?:\/\/j1\.pupuapi\.com\/client\/game\/task_system\/ script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js, requires-body=false, max-size=-1, binary-body-mode=false, tag=朴朴签到
+cron "0,10,20,30,40,50 * * * *" script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js, tag=朴朴签到定时
 
 [MITM]
 hostname = %APPEND% j1.pupuapi.com
@@ -125,6 +125,10 @@ POST /client/game/task_system/user_tasks/task/{gid}/{tid}/cumulative_clock
 
 ## 设计细节
 
+- **拦截零阻塞**：`http-request` 阶段只抓取凭据后立即 `$done()` 放行，不做任何网络请求。
+  早期版本在这里同步执行 GET+POST，会拖慢页面请求，前端超时后走 catch 分支弹出
+  「活动太火爆啦～请稍后再试」（该文案是前端 `errmsg` 为空时的兜底，并非风控提示）。
+- **打卡交给 cron**：每 10 分钟检查一次，token 有效时自动完成打卡，最迟 10 分钟内到账。
 - **纯回调式**：不使用 async/await，规避 Surge / Loon 的 JSC 兼容问题
 - **本地校验 JWT 过期**：解析 `exp` 判断，比依赖 `400000` 可靠（该码有多种含义）
 - **8 秒防抖**：页面会并发多个请求，避免重复触发
