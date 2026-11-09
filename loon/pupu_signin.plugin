@@ -1,6 +1,12 @@
 #!name=朴朴社群自动签到
-#!desc=朴朴超市小程序社群打卡：打开小程序自动打卡 + 每日定时兜底
+#!desc=朴朴超市小程序社群打卡｜打开小程序零阻塞抓取凭据，定时自动打卡（脚本 v5.2）
 #!system=ios
+#!author=justin0406
+#!homepage=https://github.com/justin0406/pupu-checkin
+#
+# 脚本版本：v5.2（日志前缀 [pupu_signin v5.2]）
+# 更新方式：Loon → 配置 → 插件 → 找到本插件 → 更新
+#          若脚本仍是旧版，到 Loon → 脚本 里删除 pupu_signin.js 后重新加载
 
 [Script]
 # 打开小程序时只抓凭据（token + 活动ID + 门店信息），零阻塞放行
