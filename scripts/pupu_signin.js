@@ -41,6 +41,7 @@
  *   打卡由 cron 每 10 分钟补上（0,10,20,30,40,50 分钟）（token 有效期内，最迟 10 分钟完成）。
  */
 
+var VER = "5.1";
 var API = "https://j1.pupuapi.com";
 var TK = "pp_pupu_token";     // Authorization: Bearer ...
 var GK = "pp_pupu_gid";       // 活动 task_group_id
@@ -48,7 +49,7 @@ var HK = "pp_pupu_ctx";       // JSON: {storeid, cityzip, placeid, suid, userid,
 var LK = "pp_pupu_lastrun";
 var UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.79(0x18004f26) NetType/WIFI Language/zh_CN miniProgram/wx122ef876a7132eb4";
 
-function log(m) { try { console.log("[pupu_signin] " + m); } catch (e) {} }
+function log(m) { try { console.log("[pupu_signin v" + VER + "] " + m); } catch (e) {} }
 function rd(k) { try { return $persistentStore.read(k); } catch (e) { return null; } }
 function wr(k, v) { try { $persistentStore.write(String(v), k); } catch (e) {} }
 function today() { var d = new Date(); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
@@ -258,6 +259,7 @@ function signin(trigger, finish) {
       if (hdr("x-pupu-auto")) { $done(); return; }
 
       var url = $request.url || "";
+      log(method + " " + url.substring(0, 90));
       var auth = hdr("authorization");
       if (auth) wr(TK, auth);
       saveCtx();
