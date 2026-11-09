@@ -3,11 +3,11 @@
  *
  * 用途：验证 Loon/Surge 的 http-request 脚本机制本身是否会影响页面请求。
  *
- * Loon 配置：
+ * ── Loon 配置（注意 Loon 与 Surge 语法不同）──
  *   [Script]
- *   pupu_probe = type=http-request, pattern=^https?:\/\/j1\.pupuapi\.com\/client\/game\/task_system\/, requires-body=false, tag=探针
+ *   http-request ^https?:\/\/j1\.pupuapi\.com\/client\/game\/task_system\/ script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_probe.js, requires-body=false, tag=探针
  *
- * Surge 配置：
+ * ── Surge 配置 ──
  *   [Script]
  *   pupu_probe = type=http-request, pattern=^https?://j1\.pupuapi\.com/client/game/task_system/, requires-body=0, script-path=pupu_probe.js
  *

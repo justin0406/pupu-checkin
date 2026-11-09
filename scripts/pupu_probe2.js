@@ -4,9 +4,9 @@
  * 与 probe 唯一区别：用 $done({}) 代替 $done()
  *   Loon 规范：http-request 脚本不修改请求时应调用 $done({})
  *
- * Loon 配置：
+ * ── Loon 配置（注意 Loon 与 Surge 语法不同，别混用）──
  *   [Script]
- *   pupu_probe2 = type=http-request, pattern=^https?:\/\/j1\.pupuapi\.com\/client\/game\/task_system\/, requires-body=false, tag=探针B
+ *   http-request ^https?:\/\/j1\.pupuapi\.com\/client\/game\/task_system\/ script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_probe2.js, requires-body=false, tag=探针B
  *
  * 对比结果：
  *   - 页面正常 → 根因就是 $done() 无参，主脚本已改 $done({})

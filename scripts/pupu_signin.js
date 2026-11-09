@@ -28,7 +28,16 @@
  *   - 所以：只要打开朴朴小程序（任意页面即可，不必进签到页），脚本抓到新 token 立刻打卡
  *   - cron 兜底仅在 token 仍有效时起作用，过期时只发一条提示
  *
- * 配置：
+ * 配置（两种客户端语法不同，别混用）：
+ *
+ *   ── Loon ──
+ *   [Script]
+ *   http-request ^https?:\/\/j1\.pupuapi\.com\/client\/game\/task_system\/ script-path=pupu_signin.js, requires-body=false, max-size=-1, binary-body-mode=false, tag=朴朴签到
+ *   cron "0,10,20,30,40,50 * * * *" script-path=pupu_signin.js, tag=朴朴签到定时
+ *   [MITM]
+ *   hostname = %APPEND% j1.pupuapi.com
+ *
+ *   ── Surge ──
  *   [Script]
  *   pupu_signin = type=http-request, pattern=^https://j1\.pupuapi\.com/client/game/task_system/, requires-body=0, script-path=pupu_signin.js
  *   pupu_signin_cron = type=cron, cron="0,10,20,30,40,50 * * * *", script-path=pupu_signin.js
