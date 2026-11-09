@@ -6,13 +6,13 @@
 
 ## 版本
 
-插件 / 模块名称自带版本号，例如 **朴朴社群自动签到 v5.3**。
+插件 / 模块名称自带版本号，例如 **朴朴社群自动签到 v5.4**。
 装的哪一版，在 Loon「插件」列表或 Surge「模块」列表里一眼可见，不必翻日志。
 
 > 发布约定：改脚本时同步更新三处 —— `scripts/pupu_signin.js` 的 `VER`、
 > `loon/pupu_signin.plugin` 与 `surge/pupu_signin.sgmodule` 的 `#!name`。
 
-当前版本：**v5.3**
+当前版本：**v5.4**
 
 ## 安装
 

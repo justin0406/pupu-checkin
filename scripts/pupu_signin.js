@@ -1,9 +1,10 @@
 /**
- * 朴朴超市微信小程序 - 社群打卡自动签到 (Surge Script) v4
+ * 朴朴超市微信小程序 - 社群打卡自动签到 (Surge / Loon Script)
  *
- * 适配 2026-11-08 新版（活动「社群打卡领福利-1102-1108」，task_rule_type=20 累计打卡）
+ * 接口基于 2026-11 版本实测。活动每周轮换，task_group_id 由脚本从请求中自动抓取，
+ * 不绑定任何具体活动，换周无需改脚本。
  *
- * ⚠ 新版重要变化（实测 2026-11-08）：
+ * ⚠ 接口要点（2026-11 实测）：
  *   1. GET 任务接口除 Authorization 外，**必须带至少一个位置头**：
  *      pp_storeid / pp-cityzip / pp-placeid 任选其一；否则返回 400000「非法请求」
  *      （旧版只要 Authorization，这是这周脚本失效的直接原因之一）
@@ -22,7 +23,7 @@
  *   已完成：task_status === 30
  *   is_received 恒为 true，不可用于判断
  *
- * ⏱ 登录态（token）机制（实测 2026-11-08）：
+ * ⏱ 登录态（token）机制：
  *   - Authorization 是服务端签发的 ES256 JWT，exp 显示寿命约 2 小时（非 cookie、非一天）
  *   - 客户端无法续期，只有小程序运行时会重新登录换新 token
  *   - 所以：只要打开朴朴小程序（任意页面即可，不必进签到页），脚本抓到新 token 立刻打卡
@@ -50,7 +51,7 @@
  *   打卡由 cron 每 10 分钟补上（0,10,20,30,40,50 分钟）（token 有效期内，最迟 10 分钟完成）。
  */
 
-var VER = "5.3";
+var VER = "5.4";
 var API = "https://j1.pupuapi.com";
 var TK = "pp_pupu_token";     // Authorization: Bearer ...
 var GK = "pp_pupu_gid";       // 活动 task_group_id
