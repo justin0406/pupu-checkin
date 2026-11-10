@@ -1,6 +1,8 @@
-#!name=朴朴社群自动签到 v5.4
+#!name=朴朴社群自动签到 v5.5
 #!desc=朴朴超市小程序社群打卡：零阻塞抓取凭据 + 定时自动打卡
 #!system=ios
+#!author=justin0406
+#!homepage=https://github.com/justin0406/pupu-checkin
 
 [Script]
 # 打开小程序时只抓凭据（token + 活动ID + 门店信息），零阻塞放行

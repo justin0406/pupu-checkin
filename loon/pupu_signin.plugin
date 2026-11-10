@@ -1,10 +1,10 @@
-#!name=朴朴社群自动签到 v5.4
+#!name=朴朴社群自动签到 v5.5
 #!desc=朴朴超市小程序社群打卡｜打开小程序零阻塞抓取凭据，定时自动打卡
 #!system=ios
 #!author=justin0406
 #!homepage=https://github.com/justin0406/pupu-checkin
 #
-# 脚本版本：v5.4（插件名后缀即当前版本，与 scripts/pupu_signin.js 的 VER 保持一致）
+# 脚本版本：v5.5（插件名后缀即当前版本，与 scripts/pupu_signin.js 的 VER 保持一致）
 # 更新方式：Loon → 配置 → 插件 → 找到本插件 → 更新
 #          若脚本仍是旧版，到 Loon → 脚本 里删除 pupu_signin.js 后重新加载
 

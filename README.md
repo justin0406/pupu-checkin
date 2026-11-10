@@ -6,13 +6,13 @@
 
 ## 版本
 
-插件 / 模块名称自带版本号，例如 **朴朴社群自动签到 v5.4**。
+插件 / 模块名称自带版本号，例如 **朴朴社群自动签到 v5.5**。
 装的哪一版，在 Loon「插件」列表或 Surge「模块」列表里一眼可见，不必翻日志。
 
 > 发布约定：改脚本时同步更新三处 —— `scripts/pupu_signin.js` 的 `VER`、
 > `loon/pupu_signin.plugin` 与 `surge/pupu_signin.sgmodule` 的 `#!name`。
 
-当前版本：**v5.4**
+当前版本：**v5.5**
 
 ## 安装
 
@@ -102,7 +102,7 @@ POST /client/game/task_system/user_tasks/task/{gid}/{tid}/cumulative_clock
 |---|---|
 | `0` + `data.receive_reward_type=10` | 打卡成功，奖励即到账 |
 | `400000 任务已经完成了,不能重复完成` | 今日已打卡（幂等）|
-| `400000 一天只能打卡一次` | 该任务尚未到日期 |
+| `400000 一天只能打卡一次` | 该任务尚未到日期（良性，静默等下一轮）|
 | `400000 非法请求` | 缺少位置头（`pp_storeid`/`pp_cityzip`/`pp_placeid`）|
 | `400000 任务组未生效` | 活动已结束 |
 | `403 签名不存在` / `403 签名非法` | 未登录 / 登录态失效 |
@@ -139,13 +139,18 @@ POST /client/game/task_system/user_tasks/task/{gid}/{tid}/cumulative_clock
   早期版本在这里同步执行 GET+POST，会拖慢页面请求，前端超时后走 catch 分支弹出
   「活动太火爆啦～请稍后再试」（该文案是前端 `errmsg` 为空时的兜底，并非风控提示）。
 - **打卡交给 cron**：每 10 分钟检查一次，token 有效时自动完成打卡，最迟 10 分钟内到账。
+  cron 必须**全天**运行（含凌晨）：`$done({})` 之后脚本随时可能被回收，拦截路径不能承担
+  任何异步后续，打卡时效完全由 cron 粒度决定，而用户打开小程序的时刻不受限。
 - **纯回调式**：不使用 async/await，规避 Surge / Loon 的 JSC 兼容问题
 - **本地校验 JWT 过期**：解析 `exp` 判断，比依赖 `400000` 可靠（该码有多种含义）
-- **8 秒防抖**：页面会并发多个请求，避免重复触发
 - **每日防重**：成功后写当日标记，同一天不再重复打卡
 - **自动适配新活动**：每周活动 `task_group_id` 会变，脚本从请求中自动抓取，无需改配置
 - **自动判断打卡类型**：`task_rule_type=20` 走 `cumulative_clock`，否则走 `clock`
-- **通知节流**：登录失效提示每天最多一条
+- **UA 跟随真实值**：抓取小程序请求的 `User-Agent` 保存复用，硬编码仅作兜底
+  （服务端已有按头校验的先例，见上文位置头）
+- **通知节流**：登录态类提示与失败提示均每天最多一条，避免 cron 每 10 分钟轰炸
+- **固定键存日期**：所有每日状态复用固定 key，值存日期串。`$persistentStore` 无删除 API，
+  用日期后缀作 key 会无限残留
 
 ## 存储键
 
@@ -153,10 +158,15 @@ POST /client/game/task_system/user_tasks/task/{gid}/{tid}/cumulative_clock
 |---|---|
 | `pp_pupu_token` | Authorization |
 | `pp_pupu_gid` | 当前活动 task_group_id |
-| `pp_pupu_ctx` | 门店/位置信息 JSON |
-| `pp_pupu_lastrun` | 防抖时间戳 |
-| `pp_done_YYYY-M-D` | 当日完成标记 |
-| `pp_warn_YYYY-M-D` | 当日提醒标记 |
+| `pp_pupu_ctx` | 门店/位置信息 + UA 的 JSON |
+| `pp_done` | 最近一次完成打卡的日期 |
+| `pp_warn` | 最近一次登录态提醒的日期 |
+| `pp_cred` | 最近一次「凭据已获取」通知的日期 |
+| `pp_fail` | 最近一次失败通知的日期 |
+
+所有日期型 key 用**固定键名 + 值存日期串**（`YYYY-M-D`，本地时间）。
+不要用 `pp_done_2026-11-10` 这类按日期命名的键：`$persistentStore` 只有读写、没有删除，
+每天新建 key 会永久堆积。
 
 ## 排错
 

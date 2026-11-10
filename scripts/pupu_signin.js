@@ -48,24 +48,31 @@
  * ⚠ 为什么拦截时不再直接打卡：
  *   拦截阶段同步做 GET+POST 会拖延页面请求，前端超时后走 catch 分支，
  *   弹出「活动太火爆啦～请稍后再试」。改为拦截只抓凭据即刻放行，
- *   打卡由 cron 每 10 分钟补上（0,10,20,30,40,50 分钟）（token 有效期内，最迟 10 分钟完成）。
+ *   打卡由 cron 每 10 分钟补上（token 有效期内，最迟 10 分钟完成）。
+ *
+ * ⚠ cron 必须全天运行（0,10,20,30,40,50 覆盖 24 小时）：
+ *   拦截阶段 $done({}) 之后脚本随时可能被回收，不能依赖拦截路径做任何异步后续。
+ *   打卡时效完全由 cron 粒度决定，而用户打开小程序的时刻不受限（含凌晨）。
+ *   不要"优化"成只在白天运行，否则夜间打开小程序的场景会静默漏打卡。
  */
 
-var VER = "5.4";
+var VER = "5.5";
 var API = "https://j1.pupuapi.com";
 var TK = "pp_pupu_token";     // Authorization: Bearer ...
 var GK = "pp_pupu_gid";       // 活动 task_group_id
-var HK = "pp_pupu_ctx";       // JSON: {storeid, cityzip, placeid, suid, userid, version}
-var LK = "pp_pupu_lastrun";
+var HK = "pp_pupu_ctx";       // JSON: {storeid, cityzip, placeid, suid, userid, version, ua}
+var KD = "pp_done";           // 值 = 完成日期（本地日期串）
+var KW = "pp_warn";           // 值 = 已提醒日期（登录态类，每天一条）
+var KC = "pp_cred";           // 值 = 已通知日期（抓到新凭据，每天一条）
+var KF = "pp_fail";           // 值 = 已通知日期（打卡失败，每天一条）
 var UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 27_0_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.79(0x18004f26) NetType/WIFI Language/zh_CN miniProgram/wx122ef876a7132eb4";
 
 function log(m) { try { console.log("[pupu_signin v" + VER + "] " + m); } catch (e) {} }
 function rd(k) { try { return $persistentStore.read(k); } catch (e) { return null; } }
 function wr(k, v) { try { $persistentStore.write(String(v), k); } catch (e) {} }
 function today() { var d = new Date(); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
-function doneKey() { return "pp_done_" + today(); }
-function warnKey() { return "pp_warn_" + today(); }
-function credKey() { return "pp_cred_" + today(); }
+function seenToday(k) { return rd(k) === today(); }
+function markToday(k) { wr(k, today()); }
 function notify(t, b) { try { $notification.post(t, "朴朴签到", b); } catch (e) {} }
 function parse(s) { try { return JSON.parse(s); } catch (e) { return {}; } }
 function once(fn) { var c = false; return function () { if (c) return; c = true; fn(); }; }
@@ -118,8 +125,6 @@ function tokenInfo(token) {
   } catch (e) { log("jwt decode fail: " + e); return { valid: true, left: -1 }; }
 }
 
-function tokenExpired(token) { return !tokenInfo(token).valid; }
-
 function saveCtx() {
   var c = {
     storeid: hdr("pp_storeid") || hdr("pp-storeid"),
@@ -128,7 +133,9 @@ function saveCtx() {
     placezip: hdr("pp-placezip") || hdr("pp_placezip"),
     suid: hdr("pp-suid"),
     userid: hdr("pp-userid"),
-    version: hdr("pp-version")
+    version: hdr("pp-version"),
+    // 小程序真实 UA：服务端已开始按头校验（位置头即先例），跟随真实值而非硬编码
+    ua: hdr("user-agent")
   };
   var old = parse(rd(HK) || "{}");
   var merged = {};
@@ -138,7 +145,7 @@ function saveCtx() {
 }
 
 function buildHeaders(ctx, token) {
-  var H = { "authorization": token, "user-agent": UA, "x-pupu-auto": "1" };
+  var H = { "authorization": token, "user-agent": ctx.ua || UA, "x-pupu-auto": "1" };
   // 关键：新版 GET 必须有位置头之一
   if (ctx.storeid) H["pp_storeid"] = ctx.storeid;
   if (ctx.cityzip) H["pp-cityzip"] = ctx.cityzip;
@@ -151,28 +158,36 @@ function buildHeaders(ctx, token) {
   return H;
 }
 
+// 每日一条：登录态类提示（缺凭据 / 缺位置头 / token 过期）
 function remind(msg) {
-  if (rd(warnKey())) { log("remind suppressed: " + msg); return; }
-  wr(warnKey(), 1);
+  if (seenToday(KW)) { log("remind suppressed: " + msg); return; }
+  markToday(KW);
   notify("朴朴登录态不可用", msg);
 }
 
-function signin(trigger, finish) {
+// 每日一条：失败提示。cron 每 10 分钟一次，不加节流会变成通知轰炸
+function fail(msg) {
+  if (seenToday(KF)) { log("fail suppressed: " + msg); return; }
+  markToday(KF);
+  notify("打卡失败", msg);
+}
+
+function signin(finish) {
   var token = rd(TK);
   var gid = rd(GK);
   var ctx = parse(rd(HK) || "{}");
 
-  log("signin(" + trigger + ") token=" + (token ? "ok" : "MISSING") + " gid=" + (gid || "MISSING") +
-      " ctx=" + JSON.stringify(ctx).substring(0, 120));
+  log("signin token=" + (token ? "ok" : "MISSING") + " gid=" + (gid || "MISSING") +
+      " ctx=" + JSON.stringify(ctx).substring(0, 140));
 
   if (!token || !gid) {
-    if (trigger === "cron") remind("请打开一次朴朴小程序签到页以获取登录态");
+    remind("请打开一次朴朴小程序签到页以获取登录态");
     finish(); return;
   }
   if (!ctx.storeid && !ctx.cityzip && !ctx.placeid) {
     // 缺位置头：GET 必然 400000，等用户打开小程序补抓
     log("missing location headers, wait for next interception");
-    if (trigger === "cron") remind("缺少门店信息，打开一次朴朴小程序签到页即可");
+    remind("缺少门店信息，打开一次朴朴小程序签到页即可");
     finish(); return;
   }
 
@@ -181,17 +196,14 @@ function signin(trigger, finish) {
   log("token " + label);
   if (!ti.valid) {
     log("skip: token expired (lifetime ~2h, refreshed only when mini program runs)");
-    if (trigger === "cron") {
-      remind("登录态已过期（有效期约 2 小时）；打开朴朴小程序任意页面即自动刷新并打卡");
-    }
+    remind("登录态已过期（有效期约 2 小时）；打开朴朴小程序任意页面即自动刷新并打卡");
     finish(); return;
   }
 
-  var quiet = trigger === "cron";
   var H = buildHeaders(ctx, token);
 
   call("get", API + "/client/game/task_system/user_tasks/task_groups/" + gid, H, null, function (err, resp, data) {
-    if (err) { log("GET failed: " + err); if (!quiet) notify("打卡失败", "网络错误: " + err); finish(); return; }
+    if (err) { log("GET failed: " + err); fail("网络错误: " + err); finish(); return; }
     log("GET -> " + String(data).substring(0, 220));
 
     var j = parse(data);
@@ -214,10 +226,10 @@ function signin(trigger, finish) {
     }).join(" "));
 
     if (!todo.length) {
-      wr(doneKey(), 1);
+      markToday(KD);
       if (doneCnt > 0) {
         log("all done today");
-        if (!quiet) notify("今日已打卡", (d.task_group_name || "朴朴") + " 第 " + doneCnt + " 天已完成");
+        notify("今日已打卡", (d.task_group_name || "朴朴") + " 第 " + doneCnt + " 天已完成");
       } else {
         log("no clockable task (not started yet?)");
       }
@@ -232,24 +244,30 @@ function signin(trigger, finish) {
       var url = API + "/client/game/task_system/user_tasks/task/" + gid + "/" + t.task_id + "/" + path;
       log("POST " + url);
       call("post", url, H, null, function (e2, r2, d2) {
-        if (e2) { log("clock fail: " + e2); if (!quiet) notify("打卡失败", "网络错误: " + e2); next(); return; }
+        if (e2) { log("clock fail: " + e2); fail("网络错误: " + e2); next(); return; }
         log("clock -> " + String(d2).substring(0, 200));
         var cj = parse(d2);
 
         if (cj.errcode === 0) {
           var rt = (cj.data && cj.data.receive_reward_type) || 0;
           if (t.take_in_way && t.take_in_way !== 10) {
-            call("put", API + "/client/game/task_system/user_tasks/task/" + t.task_id + "/reward", H, "{}", function () {});
+            // 该分支（take_in_way=20/30 需手动领奖）未实测；失败只记日志，不影响打卡结果
+            call("put", API + "/client/game/task_system/user_tasks/task/" + t.task_id + "/reward", H, "{}", function (e3, r3, d3) {
+              log("reward -> " + (e3 ? ("fail: " + e3) : String(d3).substring(0, 120)));
+            });
           }
-          wr(doneKey(), 1);
+          markToday(KD);
           notify("打卡成功", (t.task_name || "任务") + (rt === 10 ? " · 奖励已到账~" : " · 奖励即将到账~"));
         } else if (cj.errcode === 400000 && /任务已经完成/.test(cj.errmsg || "")) {
-          wr(doneKey(), 1);
-          if (!quiet) notify("今日已打卡", (t.task_name || "任务") + " 已完成，无需重复");
+          markToday(KD);
+          notify("今日已打卡", (t.task_name || "任务") + " 已完成，无需重复");
+        } else if (cj.errcode === 400000 && /一天只能打卡一次/.test(cj.errmsg || "")) {
+          // 任务尚未到日期，属良性状态：不写完成标记，不弹通知，等下一轮
+          log("not available yet: " + cj.errmsg);
         } else if (cj.errcode === 403) {
           remind("登录已过期，打开一次朴朴小程序即可恢复");
         } else {
-          notify("打卡失败", cj.errmsg || ("errcode " + cj.errcode));
+          fail(cj.errmsg || ("errcode " + cj.errcode));
         }
         next();
       });
@@ -280,15 +298,15 @@ function signin(trigger, finish) {
       }
       saveCtx();
 
-      var m = url.match(/task_groups\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
+      var m = url.match(/task_groups\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
       if (m && !/\/(preview|more_task)/.test(url)) { wr(GK, m[1]); log("gid=" + m[1]); }
 
       $done({});   // ← 立即放行，页面不受任何影响
 
       // 首次抓到新凭据时通知一次（每天一条），让用户知道脚本在工作
-      if (tokChanged && !rd(credKey())) {
-        wr(credKey(), 1);
-        notify("凭据已获取", "已抓到登录态，" + (rd(doneKey()) ? "今日已完成打卡" : "将在 10 分钟内自动打卡"));
+      if (tokChanged && !seenToday(KC)) {
+        markToday(KC);
+        notify("凭据已获取", "已抓到登录态，" + (seenToday(KD) ? "今日已完成打卡" : "将在 10 分钟内自动打卡"));
       }
 
       // 可选：这里不再发任何请求。打卡由 cron 完成（见下方配置每 10 分钟）
@@ -297,8 +315,8 @@ function signin(trigger, finish) {
 
     // ============ cron 模式：完整打卡逻辑 ============
     log("cron fire");
-    if (rd(doneKey())) { log("done today"); $done({}); return; }
-    signin("cron", once(function () { $done({}); }));
+    if (seenToday(KD)) { log("done today"); $done({}); return; }
+    signin(once(function () { $done({}); }));
 
   } catch (e) {
     log("FATAL: " + (e && e.stack ? e.stack : e));
