@@ -56,7 +56,7 @@
  *   不要"优化"成只在白天运行，否则夜间打开小程序的场景会静默漏打卡。
  */
 
-var VER = "5.5";
+var VER = "5.6";
 var API = "https://j1.pupuapi.com";
 var TK = "pp_pupu_token";     // Authorization: Bearer ...
 var GK = "pp_pupu_gid";       // 活动 task_group_id
@@ -195,8 +195,9 @@ function signin(finish) {
   var label = ti.left === -1 ? "no-exp-claim" : (ti.valid ? ("ok, " + ti.left + " min left") : ("EXPIRED " + (-ti.left) + " min ago"));
   log("token " + label);
   if (!ti.valid) {
-    log("skip: token expired (lifetime ~2h, refreshed only when mini program runs)");
-    remind("登录态已过期（有效期约 2 小时）；打开朴朴小程序任意页面即自动刷新并打卡");
+    // 静默：token 约 2h 寿命且只能由小程序桥刷新，每天推「请打开小程序」只是噪音。
+    // 用户下次打开小程序会自动抓新 token 并打卡。
+    log("skip: token expired (silent)");
     finish(); return;
   }
 
