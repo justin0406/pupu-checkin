@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # 固定 24.04：ubuntu-latest 正在向 26.04 迁移，grep/sed 行为变化可能影响检查
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 语法检查
+        run: node --check scripts/pupu_signin.js
+
+      - name: 行为测试（vm 假服务端）
+        run: node tests/harness.js scripts/pupu_signin.js
+
+      - name: Surge 模块静态检查（cronexp / requires-body 布尔值）
+        run: |
+          set -euo pipefail
+          # cron 脚本参数名是 cronexp，不是 cron（Surge 官方文档无 cron 别名）
+          grep -Eq 'type=cron, *cronexp="' surge/pupu_signin.sgmodule
+          ! grep -Eq 'type=cron, *cron="' surge/pupu_signin.sgmodule
+          # requires-body 文档值是 true/false，不是 0/1
+          ! grep -Eq 'requires-body=[01]' surge/pupu_signin.sgmodule
+
+      - name: 版本三处一致性（脚本 VER / Surge #!name / Loon #!name / README）
+        run: |
+          set -euo pipefail
+          norm() { printf '%s' "$1" | sed 's/^v//'; }
+          v_js=$(node -e 'console.log(require("fs").readFileSync("scripts/pupu_signin.js","utf8").match(/var VER = "([^"]+)"/)[1])')
+          v_surge=$(grep -m1 '^#!name=' surge/pupu_signin.sgmodule | grep -oE 'v[0-9.]+$')
+          v_loon=$(grep -m1 '^#!name=' loon/pupu_signin.plugin | grep -oE 'v[0-9.]+$')
+          v_readme=$(grep -m1 '当前版本' README.md | grep -oE 'v[0-9.]+' || true)
+          echo "js=$v_js surge=$v_surge loon=$v_loon readme=$v_readme"
+          [[ -n "$v_readme" ]]
+          [[ "$(norm "$v_js")" == "$(norm "$v_surge")" && "$(norm "$v_js")" == "$(norm "$v_loon")" && "$(norm "$v_js")" == "$(norm "$v_readme")" ]]

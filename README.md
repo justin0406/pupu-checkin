@@ -39,8 +39,8 @@ https://raw.githubusercontent.com/justin0406/pupu-checkin/main/surge/pupu_signin
 
 ```ini
 [Script]
-pupu_signin = type=http-request, pattern=^https?://j1\.pupuapi\.com/client/game/task_system/, requires-body=0, script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js
-pupu_signin_cron = type=cron, cron="0,10,20,30,40,50 * * * *", script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js
+pupu_signin = type=http-request, pattern=^https?://j1\.pupuapi\.com/client/game/task_system/, requires-body=false, script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js
+pupu_signin_cron = type=cron, cronexp="0,10,20,30,40,50 * * * *", script-path=https://raw.githubusercontent.com/justin0406/pupu-checkin/main/scripts/pupu_signin.js
 
 [MITM]
 hostname = %APPEND% j1.pupuapi.com
@@ -76,7 +76,7 @@ hostname = %APPEND% j1.pupuapi.com
 ### 卸载
 
 删除模块 / 插件后，以下存储键会残留（客户端无批量删键接口）：
-`pp_pupu_token`、`pp_pupu_gid`、`pp_pupu_ctx`、`pp_done`、`pp_warn`、`pp_cred`、`pp_fail`。
+`pp_pupu_token`、`pp_pupu_gid`、`pp_pupu_ctx`、`pp_done`、`pp_done_tasks`、`pp_warn`、`pp_cred`、`pp_fail`。
 残留不影响功能。其中 `pp_pupu_token`（登录态）与 `pp_pupu_ctx`（门店、`pp-suid`、`pp-userid`）
 含身份信息，重装或转手设备前建议清除。
 
@@ -106,7 +106,7 @@ GET  /client/game/task_system/user_tasks/task_groups/{gid}
 POST .../task/{gid}/{tid}/cumulative_clock   （task_rule_type=20）
 POST .../task/{gid}/{tid}/clock              （其他）
   ↓
-通知结果 + 写当日完成标记
+通知结果（按任务去重）；服务端列表确认全部完成后写当日完成标记
 ```
 
 ## 通知一览
@@ -118,7 +118,7 @@ POST .../task/{gid}/{tid}/clock              （其他）
 | 凭据已获取 | 已抓到登录态，将在 10 分钟内自动打卡 / 今日已完成打卡 | 每天最多 1 条 |
 | 打卡成功 | `<任务名> · 奖励已到账~`（`receive_reward_type=10`）| 每次成功 |
 | 打卡成功 | `<任务名> · 奖励即将到账~`（其他类型）| 每次成功 |
-| 今日已打卡 | `<活动名> 第 N 天已完成` / `<任务名> 已完成，无需重复` | 每天最多 1 次 |
+| 今日已打卡 | `<活动名> 第 N 天已完成` / `<任务名> 已完成，无需重复` | 每个任务每天最多 1 次 |
 | 朴朴登录态不可用 | 请打开一次朴朴小程序签到页以获取登录态 | 每天最多 1 条 |
 | 朴朴登录态不可用 | 缺少门店信息，打开一次朴朴小程序签到页即可 | 每天最多 1 条 |
 | 朴朴登录态不可用 | 登录已过期，打开一次朴朴小程序即可恢复 | 每天最多 1 条 |
@@ -208,7 +208,8 @@ POST .../task/{gid}/{tid}/clock              （其他）
 | `pp_pupu_token` | `Authorization`（含 `Bearer ` 前缀）|
 | `pp_pupu_gid` | 当前活动 `task_group_id` |
 | `pp_pupu_ctx` | JSON：`storeid` / `cityzip` / `placeid` / `placezip` / `suid` / `userid` / `version` / `ua` |
-| `pp_done` | 最近一次完成打卡的日期 |
+| `pp_done` | 全部任务确认完成后的日期（当天不再请求）|
+| `pp_done_tasks` | `日期\|任务id1,任务id2`：今日已通知完成的任务（通知去重）|
 | `pp_warn` | 最近一次登录态提醒的日期 |
 | `pp_cred` | 最近一次「凭据已获取」通知的日期 |
 | `pp_fail` | 最近一次失败通知的日期 |

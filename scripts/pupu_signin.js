@@ -40,8 +40,8 @@
  *
  *   ── Surge ──
  *   [Script]
- *   pupu_signin = type=http-request, pattern=^https://j1\.pupuapi\.com/client/game/task_system/, requires-body=0, script-path=pupu_signin.js
- *   pupu_signin_cron = type=cron, cron="0,10,20,30,40,50 * * * *", script-path=pupu_signin.js
+ *   pupu_signin = type=http-request, pattern=^https://j1\.pupuapi\.com/client/game/task_system/, requires-body=false, script-path=pupu_signin.js
+ *   pupu_signin_cron = type=cron, cronexp="0,10,20,30,40,50 * * * *", script-path=pupu_signin.js
  *   [MITM]
  *   hostname = %APPEND% j1.pupuapi.com
  *
@@ -61,7 +61,8 @@ var API = "https://j1.pupuapi.com";
 var TK = "pp_pupu_token";     // Authorization: Bearer ...
 var GK = "pp_pupu_gid";       // 活动 task_group_id
 var HK = "pp_pupu_ctx";       // JSON: {storeid, cityzip, placeid, suid, userid, version, ua}
-var KD = "pp_done";           // 值 = 完成日期（本地日期串）
+var KD = "pp_done";           // 值 = 完成日期（本地日期串）——仅当服务端确认全部任务今日已完成时才写入
+var KT = "pp_done_tasks";     // 值 = "日期|taskId1,taskId2"（今日已通知完成的任务，通知去重用）
 var KW = "pp_warn";           // 值 = 已提醒日期（登录态类，每天一条）
 var KC = "pp_cred";           // 值 = 已通知日期（抓到新凭据，每天一条）
 var KF = "pp_fail";           // 值 = 已通知日期（打卡失败，每天一条）
@@ -73,6 +74,30 @@ function wr(k, v) { try { $persistentStore.write(String(v), k); } catch (e) {} }
 function today() { var d = new Date(); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
 function seenToday(k) { return rd(k) === today(); }
 function markToday(k) { wr(k, today()); }
+
+// 今日已完成通知去重：按任务记录。服务端任务列表可能滞后于打卡结果，
+// 同一任务在「刚打完但列表还没翻状态」的窗口里会被再 POST 一次（返回"已完成"），
+// 没有按任务去重就会重复弹通知
+function seenTaskDone(id) {
+  var v = (rd(KT) || "").split("|");
+  if (v[0] !== today()) return false;
+  return ("|" + (v[1] || "") + "|").indexOf("|" + id + "|") >= 0;
+}
+function markTaskDone(id) {
+  var t = today();
+  var v = (rd(KT) || "").split("|");
+  var ids = (v[0] === t && v[1]) ? v[1].split(",").filter(Boolean) : [];
+  if (ids.indexOf(String(id)) < 0) ids.push(String(id));
+  wr(KT, t + "|" + ids.join(","));
+}
+
+// 日志只记字段存在性，不输出 token / 用户标识 / 完整上下文
+function ctxBrief(ctx) {
+  var ks = ["storeid", "cityzip", "placeid", "placezip", "suid", "userid", "version", "ua"];
+  var out = [];
+  for (var i = 0; i < ks.length; i++) out.push(ks[i] + (ctx[ks[i]] ? "=ok" : "=-"));
+  return out.join(" ");
+}
 function notify(t, b) { try { $notification.post(t, "朴朴签到", b); } catch (e) {} }
 function parse(s) { try { return JSON.parse(s); } catch (e) { return {}; } }
 function once(fn) { var c = false; return function () { if (c) return; c = true; fn(); }; }
@@ -140,6 +165,14 @@ function saveCtx() {
   var old = parse(rd(HK) || "{}");
   var merged = {};
   for (var k in c) { merged[k] = c[k] || old[k] || ""; }
+  // 本次请求带位置头：位置组（storeid/cityzip/placeid/placezip）整体采用本次快照，
+  // 避免换城/换店后新请求只带部分头时残留旧门店字段、打到旧门店
+  if (c.storeid || c.cityzip || c.placeid) {
+    merged.storeid  = c.storeid  || "";
+    merged.cityzip  = c.cityzip  || "";
+    merged.placeid  = c.placeid  || "";
+    merged.placezip = c.placezip || "";
+  }
   if (merged.storeid || merged.cityzip || merged.placeid) wr(HK, JSON.stringify(merged));
   return merged;
 }
@@ -177,8 +210,8 @@ function signin(finish) {
   var gid = rd(GK);
   var ctx = parse(rd(HK) || "{}");
 
-  log("signin token=" + (token ? "ok" : "MISSING") + " gid=" + (gid || "MISSING") +
-      " ctx=" + JSON.stringify(ctx).substring(0, 140));
+  log("signin token=" + (token ? "ok(len=" + String(token).length + ")" : "MISSING") +
+      " gid=" + (gid ? "ok" : "MISSING") + " ctx[" + ctxBrief(ctx) + "]");
 
   if (!token || !gid) {
     remind("请打开一次朴朴小程序签到页以获取登录态");
@@ -205,9 +238,9 @@ function signin(finish) {
 
   call("get", API + "/client/game/task_system/user_tasks/task_groups/" + gid, H, null, function (err, resp, data) {
     if (err) { log("GET failed: " + err); fail("网络错误: " + err); finish(); return; }
-    log("GET -> " + String(data).substring(0, 220));
 
     var j = parse(data);
+    log("GET errcode=" + j.errcode + (j.errcode ? " errmsg=" + j.errmsg : ""));
     if (j.errcode === 403) { remind("登录已过期，打开一次朴朴小程序即可恢复"); finish(); return; }
     if (j.errcode !== 0) {
       // 400000 多为活动未生效/已结束或缺头，静默等下次
@@ -217,7 +250,12 @@ function signin(finish) {
 
     var d = j.data || {};
     log("group=" + d.task_group_name + " rule=" + d.task_rule_type + " end=" + d.end_time);
-    if (d.end_time && Date.now() > d.end_time) { log("activity ended"); finish(); return; }
+    // end_time 可能是秒级或毫秒级时间戳：归一化后再比较；解析不了就当未结束，
+    // 交给下面的任务列表判断兜底（秒级误判会导致当天所有打卡静默跳过）
+    var end = Number(d.end_time);
+    if (Number.isFinite(end) && end > 0) {
+      if (Date.now() > (end < 1e12 ? end * 1000 : end)) { log("activity ended"); finish(); return; }
+    }
 
     var all = d.tasks || [];
     var todo = all.filter(function (t) { return t.task_status === 0 && !t.check_in_lock; });
@@ -227,12 +265,23 @@ function signin(finish) {
     }).join(" "));
 
     if (!todo.length) {
-      markToday(KD);
-      if (doneCnt > 0) {
-        log("all done today");
-        notify("今日已打卡", (d.task_group_name || "朴朴") + " 第 " + doneCnt + " 天已完成");
+      // KD 只在服务端确认「全部任务今日已完成」时写入：
+      //   task_status === 30  → 已完成
+      //   check_in_lock 为真  → 今日已打过被锁定（对应「一天只能打卡一次」）
+      // 之前「无待打就写 KD」会漏打稍后解锁/稍后才到日期的任务
+      var allDoneToday = all.length > 0 && all.every(function (t) {
+        return t.task_status === 30 || t.check_in_lock;
+      });
+      if (allDoneToday) {
+        markToday(KD);
+        if (doneCnt > 0) {
+          log("all done today");
+          notify("今日已打卡", (d.task_group_name || "朴朴") + " 第 " + doneCnt + " 天已完成");
+        } else {
+          log("all locked/done today (cumulative)");
+        }
       } else {
-        log("no clockable task (not started yet?)");
+        log("no clockable task (pending/locked/partial) — keep waiting");
       }
       finish(); return;
     }
@@ -246,22 +295,31 @@ function signin(finish) {
       log("POST " + url);
       call("post", url, H, null, function (e2, r2, d2) {
         if (e2) { log("clock fail: " + e2); fail("网络错误: " + e2); next(); return; }
-        log("clock -> " + String(d2).substring(0, 200));
         var cj = parse(d2);
+        log("clock errcode=" + cj.errcode + (cj.errcode ? " errmsg=" + cj.errmsg : ""));
 
         if (cj.errcode === 0) {
           var rt = (cj.data && cj.data.receive_reward_type) || 0;
           if (t.take_in_way && t.take_in_way !== 10) {
             // 该分支（take_in_way=20/30 需手动领奖）未实测；失败只记日志，不影响打卡结果
             call("put", API + "/client/game/task_system/user_tasks/task/" + t.task_id + "/reward", H, "{}", function (e3, r3, d3) {
-              log("reward -> " + (e3 ? ("fail: " + e3) : String(d3).substring(0, 120)));
+              var rj = parse(d3);
+              log("reward " + (e3 ? "fail: " + e3 : "errcode=" + (rj && rj.errcode !== undefined ? rj.errcode : "?")));
             });
           }
-          markToday(KD);
-          notify("打卡成功", (t.task_name || "任务") + (rt === 10 ? " · 奖励已到账~" : " · 奖励即将到账~"));
+          // 单个任务成功/重复都不再写全日 KD：由下一轮服务端任务列表确认后统一收口。
+          // 通知按任务去重，覆盖「刚打完但列表状态滞后导致重复 POST」的窗口
+          if (!seenTaskDone(t.task_id)) {
+            markTaskDone(t.task_id);
+            notify("打卡成功", (t.task_name || "任务") + (rt === 10 ? " · 奖励已到账~" : " · 奖励即将到账~"));
+          } else {
+            log("task " + t.task_id + " already notified today");
+          }
         } else if (cj.errcode === 400000 && /任务已经完成/.test(cj.errmsg || "")) {
-          markToday(KD);
-          notify("今日已打卡", (t.task_name || "任务") + " 已完成，无需重复");
+          if (!seenTaskDone(t.task_id)) {
+            markTaskDone(t.task_id);
+            notify("今日已打卡", (t.task_name || "任务") + " 已完成，无需重复");
+          }
         } else if (cj.errcode === 400000 && /一天只能打卡一次/.test(cj.errmsg || "")) {
           // 任务尚未到日期，属良性状态：不写完成标记，不弹通知，等下一轮
           log("not available yet: " + cj.errmsg);
@@ -302,13 +360,14 @@ function signin(finish) {
       var m = url.match(/task_groups\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
       if (m && !/\/(preview|more_task)/.test(url)) { wr(GK, m[1]); log("gid=" + m[1]); }
 
-      $done({});   // ← 立即放行，页面不受任何影响
-
-      // 首次抓到新凭据时通知一次（每天一条），让用户知道脚本在工作
+      // 首次抓到新凭据时通知一次（每天一条）：$done 之后脚本随时可能被回收，
+      // 依赖 $done 之后才执行的逻辑不可靠，通知必须在放行前发
       if (tokChanged && !seenToday(KC)) {
         markToday(KC);
         notify("凭据已获取", "已抓到登录态，" + (seenToday(KD) ? "今日已完成打卡" : "将在 10 分钟内自动打卡"));
       }
+
+      $done({});   // ← 立即放行，页面不受任何影响
 
       // 可选：这里不再发任何请求。打卡由 cron 完成（见下方配置每 10 分钟）
       return;
